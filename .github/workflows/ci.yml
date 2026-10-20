@@ -1,0 +1,50 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    name: Python ${{ matrix.python }} / PostgreSQL 17
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.13"]
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: lab
+          POSTGRES_PASSWORD: lab-ci-only
+          POSTGRES_DB: lab
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U lab -d lab"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      UV_PYTHON: ${{ matrix.python }}
+      DATABASE_URL: postgresql://lab:lab-ci-only@127.0.0.1:5432/lab
+      TEST_DATABASE_URL: postgresql://lab:lab-ci-only@127.0.0.1:5432/lab
+      WEBHOOK_SECRET: ci-test-only-key-at-least-32-bytes
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.13.4"
+          python-version: ${{ matrix.python }}
+      - run: uv sync --locked
+      - run: uv run --no-sync ruff check .
+      - run: uv run --no-sync ruff format --check .
+      - run: uv run --no-sync pytest --cov=webhook_lab --cov-report=term-missing
+      - run: uv run --no-sync lab demo
+      - run: uv build
